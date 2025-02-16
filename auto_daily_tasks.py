@@ -1,0 +1,90 @@
+import time
+
+from MouseController import mouse
+
+from pynput.keyboard import Key  # 必须导入Key类
+from KeyboardController import input_handler  # 导入实例而非类
+
+input_handler.press(Key.esc)
+mouse.move_absolute(900,520)
+mouse.click_left()
+mouse.move_absolute(1800,760)
+mouse.click_left()
+mouse.move_absolute(1111,800)
+mouse.click_left()
+input_handler.press(Key.esc)
+time.sleep(0.5)
+input_handler.press(Key.esc)
+time.sleep(0.5)
+input_handler.press("m")
+time.sleep(0.5)
+mouse.move_absolute(1700,170)
+mouse.click_left()
+mouse.move_absolute(1500,360)
+mouse.click_left()
+mouse.move_absolute(674,976)
+mouse.click_left()
+mouse.move_absolute(1630,1000)
+mouse.click_left()
+time.sleep(10)
+input_handler.press("s",tm=1.2)
+input_handler.press("a",tm=1)
+input_handler.press("f")
+time.sleep(2)
+mouse.move_absolute(1400,800)
+mouse.click_left()
+time.sleep(0.5)
+mouse.move_absolute(1400,1000)
+mouse.click_left()
+time.sleep(8)
+input_handler.press("w",tm=1.5)
+input_handler.press("f")
+time.sleep(0.5)
+mouse.move_absolute(1500,777)
+mouse.click_left()
+time.sleep(0.5)
+mouse.move_absolute(500,200)
+mouse.click_left()
+time.sleep(0.5)
+mouse.move_absolute(1130,475)
+mouse.click_left()
+time.sleep(0.5)
+mouse.move_absolute(1100,700)
+mouse.click_left()
+time.sleep(0.5)
+mouse.move_absolute(1520,944)
+mouse.click_left()
+time.sleep(0.5)
+input_handler.press("f")
+time.sleep(1)
+input_handler.press("f")
+time.sleep(1)
+input_handler.press(Key.esc)
+time.sleep(0.5)
+mouse.move_absolute(1230,1024)
+mouse.click_left()
+time.sleep(0.5)
+mouse.move_absolute(1110,686)
+mouse.click_left()
+#美鸭梨挖掘 900，520
+""""
+美鸭梨挖掘-900，520
+       一键收获 1800,760
+       再次挖掘 1111 800
+邮件-960，1028
+邮件领取全部-550，1010
+地图切换-1700，170
+            1500,360
+            674,976
+            1630,1000
+每日（
+    550，600
+    770，300
+    1100，400
+    1500，700
+    1700，400
+    ）
+
+
+
+"""

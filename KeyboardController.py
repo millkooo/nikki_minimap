@@ -91,5 +91,5 @@ class InputHandler:
 input_handler = InputHandler(DEFAULT_CONFIG["window"], foreground=True)
 
 # 发送按键（自动根据模式处理）
-input_handler.press('w',tm=2)  # 按下w键2秒
-input_handler.press(Key.space, tm=0.5)  # 按下空格0.5秒
+#input_handler.press('w',tm=2)  # 按下w键2秒
+#input_handler.press(Key.esc, tm=0.5)
