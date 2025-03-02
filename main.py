@@ -1,17 +1,17 @@
+import ctypes
 import logging
 import time
-from ctypes import windll
-
 import cv2
-import mss
 import numpy as np
 import psutil
 import pythoncom
-import win32api
 import win32con
 import win32gui
+import win32print
 import win32process
-from PIL import Image
+
+from capture.img_processor import ImageProcessor
+from minimap_match.FeatureMatch import FeatureMatcher
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,11 +25,12 @@ DEFAULT_CONFIG = {
         "process_exe": "X6Game-Win64-Shipping.exe"
     },
     "capture": {
-        "x_offset": 74,
-        "y_offset": 35,
-        "width": 206,
-        "height": 206,
-        "diameter": 220
+        #截图的参数（小地图）
+        "x_offset": 77,
+        "y_offset": 38,
+        "width": 204,
+        "height": 204,
+        "diameter": 204
     },
     "matching": {
         "min_matches": 10,
@@ -40,17 +41,15 @@ DEFAULT_CONFIG = {
     }
 }
 
-
 class WindowManager:
     """窗口管理类，负责窗口查找和操作"""
-
     @staticmethod
     def find_target_window(config: dict) -> int:
         """根据配置查找目标窗口句柄"""
 
         def callback(hwnd, hwnd_list):
-            current_title = win32gui.GetWindowText(hwnd)
-            current_class = win32gui.GetClassName(hwnd)
+            current_title = win32gui.GetWindowText(hwnd).strip()
+            current_class = win32gui.GetClassName(hwnd).strip()
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
 
             if (config["title_part"] in current_title and
@@ -78,194 +77,52 @@ class WindowManager:
         """激活并置顶窗口"""
         try:
             pythoncom.CoInitialize()
-
             if win32gui.IsIconic(hwnd):
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-
-            win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
             win32gui.SetForegroundWindow(hwnd)
-            win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
             time.sleep(0.5)
         except Exception as e:
             logger.error(f"窗口激活失败: {str(e)}")
         finally:
             pythoncom.CoUninitialize()
 
-
-class ImageProcessor:
-    """图像处理类，负责图像采集和处理"""
-
-    def __init__(self, hwnd: int, config: dict):
-        self.hwnd = hwnd
-        self.capture_config = config
-        self.window_rect = win32gui.GetWindowRect(hwnd)
-        windll.user32.SetProcessDPIAware()
-
-    def capture_window(self) -> np.ndarray:
-        """捕获窗口指定区域"""
-        region = {
-            "left": self.window_rect[0] + self.capture_config["x_offset"],
-            "top": self.window_rect[1] + self.capture_config["y_offset"],
-            "width": self.capture_config["width"],
-            "height": self.capture_config["height"]
-        }
-
-        with mss.mss() as sct:
-            screenshot = sct.grab(region)
-            pil_image = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
-
-        return cv2.cvtColor(np.array(pil_image.convert("RGB")), cv2.COLOR_RGB2BGR)
+    @staticmethod
+    def close_window(hwnd: int) -> None:
+        """关闭指定窗口句柄对应的窗口"""
+        try:
+            import win32gui
+            import win32con
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            print("游戏窗口已关闭")
+        except Exception as e:
+            print(f"关闭窗口失败: {e}")
 
     @staticmethod
-    def crop_to_circle(image: np.ndarray, diameter: int) -> np.ndarray:
-        """将图像裁剪为圆形"""
-        height, width = image.shape[:2]
-        mask = np.zeros((height, width), dtype=np.uint8)
-        center = (width // 2, height // 2)
-        radius = (diameter - 18) // 2
-
-        cv2.circle(mask, center, radius, 255, -1)
-        masked_image = cv2.bitwise_and(image, image, mask=mask)
-        result = np.zeros((height, width, 4), dtype=np.uint8)
-        result[:, :, :3] = masked_image
-        result[:, :, 3] = mask
-        return result
-
-
-class FeatureMatcher:
-    """特征匹配类，负责特征匹配和结果可视化"""
-
-    def __init__(self, template_path: str, config: dict):
-        self.config = config
-        self.kp_template, self.des_template = self._load_template_features(template_path)
-        self.last_match_center = None
-        self.sift = cv2.SIFT_create(nOctaveLayers=5, contrastThreshold=0.01, edgeThreshold=15)
-        self.flann = cv2.FlannBasedMatcher(
-            dict(algorithm=1, table_number=6, key_size=12),
-            dict(checks=config["flann_checks"])
-        )
-
-    def _load_template_features(self, filename: str) -> tuple:
-        """加载模板特征"""
+    def is_window_minimized(hwnd: int) -> bool:
+        """检测窗口是否处于最小化状态"""
         try:
-            data = np.load(filename)
-            kp_data = data['kp']
-            des = data['des']
+            import win32gui
+            import win32con
+            placement = win32gui.GetWindowPlacement(hwnd)
+            return placement[1] == win32con.SW_SHOWMINIMIZED
+        except:
+            return False
 
-            kp = []
-            for p in kp_data:
-                keypoint = cv2.KeyPoint(
-                    x=float(p[0]),  # pt_x
-                    y=float(p[1]),  # pt_y
-                    size=float(p[2]),  # size
-                    angle=float(p[3]),  # angle
-                    response=float(p[4]),  # response
-                    octave=int(p[5]),  # octave需要显式转int
-                    class_id=int(p[6])  # 兼容class_id参数
-                )
-                kp.append(keypoint)
-
-            return kp, des
-        except FileNotFoundError:
-            logger.error("特征文件未找到，请先运行特征提取脚本")
-            raise
-    def process_frame(self, query_image: np.ndarray):
-        """处理单个帧并进行特征匹配"""
-
-        query_gray = cv2.cvtColor(query_image, cv2.COLOR_BGRA2GRAY)
-        query_color = cv2.cvtColor(query_image, cv2.COLOR_BGRA2BGR)
-
-        # 获取当前匹配区域特征点
-        kp_template, des_template = self._get_current_features()
-
-        # 特征检测和匹配
-        kp_query, des_query = self.sift.detectAndCompute(query_gray, None)
-        matches = self.flann.knnMatch(des_query, des_template, k=2)
-        good_matches = [m for m, n in matches if m.distance < self.config["match_ratio"] * n.distance]
-
-        if len(good_matches) >= 3:
-            return self._handle_successful_match(kp_query, kp_template, good_matches, query_color)
-        return None
-
-    def _get_current_features(self) -> tuple:
-        """获取当前使用的特征点"""
-        if self.last_match_center:
-            return self._filter_features_by_region()
-        return self.kp_template, self.des_template
-
-    def _filter_features_by_region(self) -> tuple:
-        """根据上次匹配位置筛选特征点"""
-        cx, cy = self.last_match_center
-        filtered = [
-            (kp, des) for kp, des in zip(self.kp_template, self.des_template)
-            if (kp.pt[0] - cx) ** 2 + (kp.pt[1] - cy) ** 2 <= 1000 ** 2
-        ]
-
-        if filtered:
-            # 解压筛选后的特征点
-            kp_filtered, des_filtered = zip(*filtered)
-            # 将描述子转换为二维numpy数组
-            des_array = np.vstack(des_filtered)
-            return kp_filtered, des_array
-        return self.kp_template, self.des_template
-
-    def _filter_features_by_region1(self) -> tuple:
-        """根据上次匹配位置筛选特征点"""
-        cx, cy = self.last_match_center
-        filtered = [
-            (kp, des) for kp, des in zip(self.kp_template, self.des_template)
-            if (kp.pt[0] - cx) ** 2 + (kp.pt[1] - cy) ** 2 <= 1000 ** 2
-        ]
-        return zip(*filtered) if filtered else (self.kp_template, self.des_template)
-
-    def _handle_successful_match(self, kp_query, kp_template, matches, query_color):
-        """处理成功匹配的情况"""
-        src_pts = np.float32([kp_query[m.queryIdx].pt for m in matches])
-        dst_pts = np.float32([kp_template[m.trainIdx].pt for m in matches])
-
-        M, _ = cv2.estimateAffinePartial2D(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=3.0)
-        if M is None:
-            return None
-
-        theta = np.arctan2(M[1, 0], M[0, 0])
-        if abs(np.rad2deg(theta)) > self.config["max_angle"]:
-            logger.debug("角度超出允许范围")
-            return None
-
-        tx, ty = M[0, 2], M[1, 2]
-        center = self._calculate_center(M, query_color.shape)
-        self._update_match_center(len(matches), center)
-
-        return {
-            "transform": M,
-            "center": center,
-            "matches": len(matches),
-            "angle": np.rad2deg(theta),
-            "translation": (tx, ty)
-        }
-
-    def _calculate_center(self, M, shape):
-        """计算匹配中心点"""
-        h, w = shape[:2]
-        scaled_w = int(w * self.config["fixed_scale"])
-        scaled_h = int(h * self.config["fixed_scale"])
-        return (
-            int(M[0, 2] + scaled_w / 2),
-            int(M[1, 2] + scaled_h / 2)
-        )
-
-    def _update_match_center(self, matches_count, center):
-        """更新匹配中心位置"""
-        if matches_count >= self.config["min_matches"]:
-            self.last_match_center = center
-            logger.info(f"更新匹配中心到: {center}")
-        else:
-            self.last_match_center = None
+    @staticmethod
+    def get_scaling_factor(hwnd: int) -> float:
+        """获取精确到小数点后两位的缩放因子"""
+        try:
+            dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+            return round(dpi / 96.0, 2)
+        except AttributeError:
+            hdc = win32gui.GetDC(hwnd)
+            dpi = win32print.GetDeviceCaps(hdc, win32con.LOGPIXELSX)
+            win32gui.ReleaseDC(hwnd, hdc)
+            return round(dpi / 96.0, 2)
 
 
 class ResultVisualizer:
     """结果可视化类，负责结果显示和窗口管理"""
-
     @staticmethod
     def show_match_result(result: dict, template_image: np.ndarray):
         """显示匹配结果"""
@@ -318,7 +175,7 @@ class ResultVisualizer:
 
 def main():
     """主程序"""
-    # 初始化模块
+    # 初始化
     target_hwnd = WindowManager.find_target_window(DEFAULT_CONFIG["window"])
     if not target_hwnd:
         logger.error("未找到目标窗口")
@@ -326,20 +183,30 @@ def main():
 
     WindowManager.activate_window(target_hwnd)
     image_processor = ImageProcessor(target_hwnd, DEFAULT_CONFIG["capture"])
-    feature_matcher = FeatureMatcher('preprocessed_features.npz', DEFAULT_CONFIG["matching"])
+    feature_matcher = FeatureMatcher('resources/preprocessed_features.npz', DEFAULT_CONFIG["matching"])
 
-    # 加载模板图像
-    template_img = cv2.imread('result100.png', cv2.IMREAD_GRAYSCALE)
+    # 加载模板图
+    template_img = cv2.imread('resources/nuanuan_map.png', cv2.IMREAD_GRAYSCALE)
     template_color = cv2.cvtColor(template_img, cv2.COLOR_GRAY2BGR)
 
+    prev_hash = None
+    prev_result = None
     try:
         while True:
             # 处理帧
             frame = image_processor.capture_window()
-            circular_frame = ImageProcessor.crop_to_circle(frame, DEFAULT_CONFIG["capture"]["diameter"])
+            circular_frame = ImageProcessor.circle_crop(frame, DEFAULT_CONFIG["capture"]["diameter"])
 
             # 特征匹配
-            match_result = feature_matcher.process_frame(circular_frame)
+            current_hash = ImageProcessor.compute_image_hash(circular_frame)
+            if current_hash == prev_hash:
+                match_result = prev_result
+                #print("检测到相同帧，复用先前结果")
+            else:
+                match_result = feature_matcher.process_frame(circular_frame)
+                prev_hash = current_hash
+                prev_result = match_result
+                #print("检测到新帧，执行特征匹配")
 
             # 显示结果
             if match_result:

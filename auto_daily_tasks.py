@@ -1,16 +1,17 @@
 import time
+from controller.MouseController import mouse
 
-from MouseController import mouse
-
-from pynput.keyboard import Key  # 必须导入Key类
-from KeyboardController import input_handler  # 导入实例而非类
-
+from pynput.keyboard import Key
+from controller.KeyboardController import input_handler
+time.sleep(2)
 input_handler.press(Key.esc)
-mouse.move_absolute(900,520)
+mouse.move_absolute(900,520)#美鸭梨
 mouse.click_left()
-mouse.move_absolute(1800,760)
-mouse.click_left()
-mouse.move_absolute(1111,800)
+mouse.move_absolute(1820,76,0)#一键收获
+time.sleep(1)
+mouse.click_left(0.5)
+time.sleep(0.5)
+mouse.move_absolute(1111,800)#再次挖掘
 mouse.click_left()
 input_handler.press(Key.esc)
 time.sleep(0.5)
@@ -18,15 +19,18 @@ input_handler.press(Key.esc)
 time.sleep(0.5)
 input_handler.press("m")
 time.sleep(0.5)
-mouse.move_absolute(1700,170)
+mouse.move_absolute(1700,170)#地图区域选择
+time.sleep(0.5)
 mouse.click_left()
-mouse.move_absolute(1500,360)
+mouse.move_absolute(1500,360)#花园镇
+time.sleep(0.2)
 mouse.click_left()
-mouse.move_absolute(674,976)
+mouse.move_absolute(681,981)#心愿花街
+time.sleep(0.5)
 mouse.click_left()
-mouse.move_absolute(1630,1000)
+mouse.move_absolute(1630,1000)#传送
 mouse.click_left()
-time.sleep(10)
+time.sleep(14)
 input_handler.press("s",tm=1.2)
 input_handler.press("a",tm=1)
 input_handler.press("f")
@@ -58,6 +62,10 @@ time.sleep(0.5)
 input_handler.press("f")
 time.sleep(1)
 input_handler.press("f")
+time.sleep(1)
+input_handler.press("f")
+time.sleep(1)
+input_handler.press(Key.esc)
 time.sleep(1)
 input_handler.press(Key.esc)
 time.sleep(0.5)
