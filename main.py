@@ -1,15 +1,12 @@
-import ctypes
+import json
 import logging
+import os
 import time
 import cv2
 import numpy as np
-import psutil
-import pythoncom
 import win32con
 import win32gui
-import win32print
-import win32process
-
+from Ui_Manage.WindowManager import WinControl
 from capture.img_processor import ImageProcessor
 from minimap_match.FeatureMatch import FeatureMatcher
 
@@ -26,105 +23,49 @@ DEFAULT_CONFIG = {
     },
     "capture": {
         #截图的参数（小地图）
-        "x_offset": 77,
-        "y_offset": 38,
-        "width": 204,
-        "height": 204,
+        "list": [ { "x_offset": 77,"y_offset": 38,"width": 204,"height": 204},
+                  {"x_offset": 0, "y_offset": 0, "width": 1920, "height": 1080},],
         "diameter": 204
     },
     "matching": {
-        "min_matches": 10,
-        "flann_checks": 50,
-        "match_ratio": 0.8,
-        "max_angle": 5,
-        "fixed_scale": 1.17
+        "boundaries": [
+            {
+                "range": (5600, 4900, 6100, 6500),  # x1,y1,x2,y2
+                "regions": ["huayuanzhen", "xiaoshishu"]  # 相邻区域
+            },
+            {
+                "range": (9427, 4175, 9767, 4390),  # x1,y1,x2,y2
+                "regions": ["huayuanzhen", "qiyuansenlin"]  # 相邻区域
+            },
+            {
+                "range": (6540, 4290, 7450, 4520),  # x1,y1,x2,y2
+                "regions": ["huayuanzhen", "weifenglvye"]  # 相邻区域
+            },
+
+        ],
+        "region_features": {
+            "huayuanzhen": "resources/features/huayuanzhen_features.npz",
+            "qiyuansenlin": "resources/features/qiyuansenlin_features.npz",
+            "weifenglvye": "resources/features/weifenglvye_features.npz",
+            "xiaoshishu": "resources/features/xiaoshishu_features.npz",
+            "panduan": "resources/features/panduan_features.npz",
+            "huayanqundao": "resources/features/huayanqundao_features.npz"
+        },
+        "min_matches": 10,#更新匹配中心所需匹配的特征点数量
+        "flann_checks": 50,#搜索的次数和准确性。较大的 checks 值会提高匹配的准确性
+        "match_ratio": 0.8,#控制特征匹配严格程度，默认0.7-0.8
+        "max_angle": 5,#识别允许的最大偏转角
+        "fixed_scale": 1.17,#默认的缩放比例
+        "min_scale_ratio":1,
+        "max_scale_ratio":1.2
     }
 }
-
-class WindowManager:
-    """窗口管理类，负责窗口查找和操作"""
-    @staticmethod
-    def find_target_window(config: dict) -> int:
-        """根据配置查找目标窗口句柄"""
-
-        def callback(hwnd, hwnd_list):
-            current_title = win32gui.GetWindowText(hwnd).strip()
-            current_class = win32gui.GetClassName(hwnd).strip()
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-
-            if (config["title_part"] in current_title and
-                    current_class == config["window_class"] and
-                    WindowManager._check_process_exe(pid, config["process_exe"])):
-                hwnd_list.append(hwnd)
-            return True
-
-        hwnd_list = []
-        win32gui.EnumWindows(callback, hwnd_list)
-        return hwnd_list[0] if hwnd_list else None
-
-    @staticmethod
-    def _check_process_exe(pid: int, target_exe: str) -> bool:
-        """验证进程可执行文件"""
-        try:
-            process = psutil.Process(pid)
-            exe_name = process.exe().split('\\')[-1].lower()
-            return exe_name == target_exe.lower()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return False
-
-    @staticmethod
-    def activate_window(hwnd: int):
-        """激活并置顶窗口"""
-        try:
-            pythoncom.CoInitialize()
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.5)
-        except Exception as e:
-            logger.error(f"窗口激活失败: {str(e)}")
-        finally:
-            pythoncom.CoUninitialize()
-
-    @staticmethod
-    def close_window(hwnd: int) -> None:
-        """关闭指定窗口句柄对应的窗口"""
-        try:
-            import win32gui
-            import win32con
-            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-            print("游戏窗口已关闭")
-        except Exception as e:
-            print(f"关闭窗口失败: {e}")
-
-    @staticmethod
-    def is_window_minimized(hwnd: int) -> bool:
-        """检测窗口是否处于最小化状态"""
-        try:
-            import win32gui
-            import win32con
-            placement = win32gui.GetWindowPlacement(hwnd)
-            return placement[1] == win32con.SW_SHOWMINIMIZED
-        except:
-            return False
-
-    @staticmethod
-    def get_scaling_factor(hwnd: int) -> float:
-        """获取精确到小数点后两位的缩放因子"""
-        try:
-            dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
-            return round(dpi / 96.0, 2)
-        except AttributeError:
-            hdc = win32gui.GetDC(hwnd)
-            dpi = win32print.GetDeviceCaps(hdc, win32con.LOGPIXELSX)
-            win32gui.ReleaseDC(hwnd, hdc)
-            return round(dpi / 96.0, 2)
 
 
 class ResultVisualizer:
     """结果可视化类，负责结果显示和窗口管理"""
     @staticmethod
-    def show_match_result(result: dict, template_image: np.ndarray):
+    def show_match_result(result: dict, template_image: np.ndarray,angle):
         """显示匹配结果"""
         display_img = template_image.copy()
         M = result["transform"]
@@ -142,15 +83,48 @@ class ResultVisualizer:
 
         # 绘制中心点
         cv2.circle(display_img, center, 5, (0, 0, 255), -1)
+        print(angle)
+        # 将角度转换为弧度
+        angle_rad = np.deg2rad(angle)
+        # 计算箭头终点坐标
+        start_x = center[0]- 8 * np.cos(angle_rad)
+        start_y = center[1]+ 8 * np.sin(angle_rad)
+        end_x = center[0] + 14 * np.cos(angle_rad)
+        end_y = center[1] - 14 * np.sin(angle_rad)
+        start_point = (int(start_x),int(start_y))
 
+        end_point = (int(end_x), int(end_y))
+
+        # 绘制箭杆
+        cv2.line(display_img, start_point, end_point, (255, 255, 0), 2)
+
+        # 计算箭头头的两个辅助点
+        # 箭头头的方向
+        theta_rad = np.deg2rad(25)
+        left_angle = angle_rad + np.pi - theta_rad  # 左分支角度
+        right_angle = angle_rad + np.pi + theta_rad  # 右分支角度
+
+        # 计算左右分支端点
+        left_end = (
+            int(end_x + 8 * np.cos(left_angle)),
+            int(end_y - 8 * np.sin(left_angle))  # 注意保持y轴方向一致
+        )
+
+        right_end = (
+            int(end_x + 8 * np.cos(right_angle)),
+            int(end_y - 8 * np.sin(right_angle))
+        )
+        # 绘制箭头分支
+        cv2.line(display_img, end_point, left_end, (255, 255, 0), 2)
+        cv2.line(display_img, end_point, right_end, (255, 255, 0), 2)
         # 创建显示区域
-        cropped = ResultVisualizer._create_viewport(display_img, center, 250)
+        cropped = ResultVisualizer._create_viewport(display_img, center, 100)
         cv2.putText(cropped, f'Matches: {result["matches"]}',
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
         # 显示结果
         cv2.namedWindow('Matching Result', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Matching Result', 500, 500)
+        cv2.resizeWindow('Matching Result', 200, 200)
         cv2.imshow('Matching Result', cropped)
         ResultVisualizer.set_topmost('Matching Result')
 
@@ -172,48 +146,298 @@ class ResultVisualizer:
             win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                                   win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
 
+class AngleDetector:
+    def __init__(self,
+                 threshold_angle=48,
+                 angle_tolerance=7,
+                 canny_threshold=(50, 150),
+                 hough_params=(20, 16, 10)):
+        # 算法参数配置
+        self.threshold_angle = threshold_angle
+        self.angle_tolerance = angle_tolerance
+        self.canny_threshold = canny_threshold
+        self.hough_threshold, self.min_length, self.max_gap = hough_params
+
+    def calculate_angle(self, circular_frame):
+        # 获取图像中心
+        height, width = circular_frame.shape[:2]
+        center = (width // 2, height // 2)
+
+        # 预处理
+        gray = cv2.cvtColor(circular_frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, *self.canny_threshold)
+
+        # 霍夫变换检测直线
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180,
+                                threshold=self.hough_threshold,
+                                minLineLength=self.min_length,
+                                maxLineGap=self.max_gap)
+
+        # 异常处理
+        if lines is None:
+            print("未检测到直线")
+            return 0
+
+        lines = [line[0] for line in lines]
+        if len(lines) < 2:
+            print("检测到的直线不足两条")
+            return 0
+
+        # 遍历所有直线组合寻找最佳角度
+        best = self._find_best_angle_pair(lines, center)
+
+        if best:
+            angle = self._calculate_final_angle(best, center)
+            return int(angle)
+
+        print("未找到符合条件的箭头")
+        return 0
+
+    def _find_best_angle_pair(self, lines, center):
+        best_pair = None
+        best_diff = float('inf')
+
+        for i in range(len(lines)):
+            for j in range(i + 1, len(lines)):
+                line1, line2 = lines[i], lines[j]
+                vertex = self._calculate_intersection(line1, line2)
+
+                if vertex is None:
+                    continue  # 忽略平行线
+
+                angle = self._calculate_angle_between(line1, line2)
+                angle_diff = abs(angle - self.threshold_angle)
+
+                if angle_diff <= self.angle_tolerance and angle_diff < best_diff:
+                    best_diff = angle_diff
+                    best_pair = (line1, line2, *vertex)
+
+        return best_pair
+
+    def _calculate_intersection(self, line1, line2):
+        # 解包线段坐标
+        x1, y1, x2, y2 = line1
+        x3, y3, x4, y4 = line2
+
+        dx1, dy1 = x2 - x1, y2 - y1
+        dx2, dy2 = x4 - x3, y4 - y3
+        # 计算交点
+        denominator = dx2 * dy1 - dx1 * dy2
+        if denominator == 0:
+            return 0 # 平行线跳过
+        # 计算参数t和s
+        t_numerator = dx2 * (y3 - y1) + dy2 * (x1 - x3)
+        s_numerator = dx1 * (y3 - y1) + dy1 * (x1 - x3)
+        t = t_numerator / denominator
+        s = s_numerator / denominator
+        # 计算交点坐标
+        ix = x1 + t * dx1
+        iy = y1 + t * dy1
+        return ix, iy
+
+    def _calculate_angle_between(self, line1, line2):
+        # 计算两向量夹角
+        vec1 = np.array([line1[2] - line1[0], line1[3] - line1[1]])
+        vec2 = np.array([line2[2] - line2[0], line2[3] - line2[1]])
+
+        cos_theta = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+        angle = np.degrees(np.arccos(np.clip(cos_theta, -1, 1)))
+        return min(angle, 180 - angle)  # 始终返回锐角
+
+    def _calculate_final_angle(self, best_pair, center):
+        _, _, ix, iy = best_pair
+        dx = ix - center[0]
+        dy = center[1] - iy  # 转换为数学坐标系
+        return np.degrees(np.arctan2(dy, dx)) % 360
+
+
+class NavigationState:
+    def __init__(self):
+        self.current_region = None
+        self.active_matchers = []
+        self.last_position = (0, 0)
+        self.last_angle = 90
+        self.prev_hash = None
+        self.prev_result = None
+        self.boundary_status = {}  # 修正为字典类型
+        self.in_panduan = False
+        self.last_panduan_check = 0
+
 
 def main():
     """主程序"""
     # 初始化
-    target_hwnd = WindowManager.find_target_window(DEFAULT_CONFIG["window"])
+    target_hwnd = WinControl.find_target_window(DEFAULT_CONFIG["window"])
     if not target_hwnd:
         logger.error("未找到目标窗口")
         return
 
-    WindowManager.activate_window(target_hwnd)
-    image_processor = ImageProcessor(target_hwnd, DEFAULT_CONFIG["capture"])
-    feature_matcher = FeatureMatcher('resources/preprocessed_features.npz', DEFAULT_CONFIG["matching"])
-
+    WinControl.activate_window(target_hwnd)
+    image_processor = ImageProcessor(target_hwnd)
     # 加载模板图
-    template_img = cv2.imread('resources/nuanuan_map.png', cv2.IMREAD_GRAYSCALE)
-    template_color = cv2.cvtColor(template_img, cv2.COLOR_GRAY2BGR)
+    huayan_img = cv2.imread('resources/img/huayanqundao.png', cv2.IMREAD_GRAYSCALE)
+    xinyuanyuanye_img = cv2.imread('resources/img/nuanuan_map.png', cv2.IMREAD_GRAYSCALE)
 
-    prev_hash = None
-    prev_result = None
+    features_matcher = {}
+    for region, path in DEFAULT_CONFIG["matching"]["region_features"].items():
+        features_matcher[region] = FeatureMatcher(path, DEFAULT_CONFIG["matching"])
+
+    state = NavigationState()
+    AngleD = AngleDetector()
+
+    def check_boundaries(x, y):
+        """边界检测并返回需要预加载的区域（带状态跟踪和自动卸载）"""
+        required_regions = set()
+        active_boundaries = set()
+
+        # 第一步：检测当前处于哪些边界
+        for boundary in DEFAULT_CONFIG["matching"]["boundaries"]:
+            bid = id(boundary)
+            x1, y1, x2, y2 = boundary["range"]
+            in_boundary = x1 <= x <= x2 and y1 <= y <= y2
+
+            # 记录当前活跃边界
+            if in_boundary:
+                active_boundaries.add(bid)
+                required_regions.update(boundary["regions"])
+
+            # 更新边界状态变化
+            prev_status = bid in state.boundary_status
+            if in_boundary and not prev_status:
+                print(f"进入边界区域：{boundary['regions']}")
+            elif not in_boundary and prev_status:
+                print(f"离开边界区域：{boundary['regions']}")
+
+        # 第二步：清理过期边界状态
+        to_remove = []
+        for bid in state.boundary_status:
+            if bid not in active_boundaries:
+                if state.boundary_status[bid] >= 20:  # 连续20帧不在边界内才卸载
+                    to_remove.append(bid)
+                else:
+                    state.boundary_status[bid] += 1
+        for bid in to_remove:
+            regions = next(b["regions"] for b in DEFAULT_CONFIG["matching"]["boundaries"] if id(b) == bid)
+            print(f"卸载边界区域：{regions}")
+            del state.boundary_status[bid]
+
+        # 第三步：合并所有活跃边界的区域
+        return list(required_regions)
+
+    def update_matchers(required_regions):
+        """智能更新匹配器列表（带自动清理）"""
+        # 必须保留的匹配器：当前区域 + 活跃边界区域 + panduan
+        must_keep = {state.current_region, "panduan"}
+        must_keep.update(required_regions)
+
+        # 过滤无效区域
+        valid_regions = [r for r in must_keep if r in features_matcher]
+
+        # 计算需要卸载的匹配器
+        current_matchers = {m.region_name for m in state.active_matchers}
+        to_remove = current_matchers - set(valid_regions)
+
+        # 执行卸载
+        if to_remove:
+            print(f"卸载未使用区域：{list(to_remove)}")
+            state.active_matchers = [m for m in state.active_matchers if m.region_name not in to_remove]
+
+        # 添加需要的新匹配器
+        for region in valid_regions:
+            if region not in current_matchers:
+                matcher = features_matcher[region]
+                state.active_matchers.append(matcher)
+                print(f"加载区域匹配器：{region}")
     try:
         while True:
-            # 处理帧
-            frame = image_processor.capture_window()
+
+            if state.in_panduan:
+                current_time = time.time()
+
+                if state.last_position[0] < 600:
+                    interval = 1
+                else:
+                    interval = 3
+                if current_time - state.last_panduan_check >= interval:
+                    frame = image_processor.capture_region({ "x_offset": 77,"y_offset": 38,"width": 204,"height": 204})
+                    circular_frame = ImageProcessor.circle_crop(frame, DEFAULT_CONFIG["capture"]["diameter"])
+
+                    current_hash = ImageProcessor.compute_image_hash(circular_frame)
+                    if current_hash == state.prev_hash and state.prev_result:
+                        print(f"[Panduan] 复用结果 X: {state.prev_result['center'][0]}")
+                        state.last_panduan_check = int(current_time)  # 将float类型转换为int类型
+                        continue
+
+                    state.prev_hash = current_hash
+                    result = features_matcher["panduan"].process_frame(circular_frame)
+
+                    if result and result["matches"] >= DEFAULT_CONFIG["matching"]["min_matches"]:
+                        state.last_position = result["center"]
+                        state.prev_result = result
+                        print(f"判断状态，当前x值: {state.last_position[0]}")
+                        state.last_panduan_check = int(current_time)  # 将float类型转换为int类型
+                    else:
+                        state.in_panduan = False
+                        state.current_region = None
+                        print("退出panduan状态")
+                continue
+
+            frame = image_processor.capture_region({ "x_offset": 77,"y_offset": 38,"width": 204,"height": 204})
             circular_frame = ImageProcessor.circle_crop(frame, DEFAULT_CONFIG["capture"]["diameter"])
+            crop_imgg = ImageProcessor.circle_crop(circular_frame, 32)
 
-            # 特征匹配
+            # 全局哈希检查
             current_hash = ImageProcessor.compute_image_hash(circular_frame)
-            if current_hash == prev_hash:
-                match_result = prev_result
-                #print("检测到相同帧，复用先前结果")
+            if current_hash == state.prev_hash and state.prev_result:
+                #print("检测到相同帧，复用结果")
+                best_match = state.prev_result
+                time.sleep(0.3)
             else:
-                match_result = feature_matcher.process_frame(circular_frame)
-                prev_hash = current_hash
-                prev_result = match_result
-                #print("检测到新帧，执行特征匹配")
+                state.prev_hash = current_hash
+                best_match = None
 
-            # 显示结果
-            if match_result:
-                ResultVisualizer.show_match_result(match_result, template_color)
+                # Panduan优先检测
+                panduan_result = features_matcher["panduan"].process_frame(circular_frame)
+                if panduan_result and panduan_result["matches"] >= DEFAULT_CONFIG["matching"]["min_matches"]:
+                    state.current_region = "panduan"
+                    state.in_panduan = True
+                    state.last_position = panduan_result["center"]
+                    state.prev_result = panduan_result
+                    print(f"进入Panduan状态，初始X: {state.last_position[0]}")
+                    continue
 
-            if cv2.waitKey(1) == 27:  # ESC退出
+                # 动态加载匹配器
+                if state.current_region:
+                    # 获取所有需要预加载的边界区域
+                    boundary_regions = check_boundaries(*state.last_position)
+                    # 智能更新匹配器（自动清理+加载）
+                    update_matchers(boundary_regions)
+                else:
+                    # 初始状态加载所有匹配器
+                    update_matchers(DEFAULT_CONFIG["matching"]["region_features"].keys())
+
+                # 特征匹配
+                for matcher in state.active_matchers:
+                    result = matcher.process_frame(circular_frame)
+                    if result and result["matches"] >= DEFAULT_CONFIG["matching"]["min_matches"]:
+                        if not best_match or result["matches"] > best_match["matches"]:
+                            best_match = result
+                            state.current_region = matcher.region_name
+                            state.last_position = result["center"]
+                            state.prev_result = best_match  # 保存最新结果
+                    jiaodu = AngleD.calculate_angle(crop_imgg)
+                    if jiaodu:
+                        state.last_angle = jiaodu
+            # 4. 显示逻辑
+            if best_match:
+                if state.current_region == "huayanqundao":
+                    ResultVisualizer.show_match_result(best_match, huayan_img, state.last_angle)
+                else:
+                    ResultVisualizer.show_match_result(best_match, xinyuanyuanye_img, state.last_angle)
+
+            if cv2.waitKey(1) == 27:
                 break
+
 
     finally:
         cv2.destroyAllWindows()

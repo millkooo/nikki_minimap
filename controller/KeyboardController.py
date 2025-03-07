@@ -1,4 +1,11 @@
-from controller import *
+import ctypes
+import time
+from ctypes import wintypes
+import win32con
+import win32api
+import win32gui
+from Ui_Manage.WindowManager import WinControl
+from pynput.keyboard import Controller, Listener, Key, KeyCode
 
 class InputHandler:
 
@@ -17,7 +24,7 @@ class InputHandler:
 
     def refresh_window_handle(self):
         """刷新游戏窗口句柄"""
-        self.game_hwnd = WindowManager.find_target_window(self.config)
+        self.game_hwnd = WinControl.find_target_window(self.config)
         if not self.game_hwnd:
             raise RuntimeError("未找到游戏窗口")
 
@@ -25,8 +32,8 @@ class InputHandler:
     def _on_key_press(self, key):
         """按键监听回调"""
         try:
-            if key == Key.f8:
-                print("F8 已被按下，尝试停止运行")
+            if key == Key.f9:
+                print("F9 已被按下，尝试停止运行")
                 self.stop_flag = True
         except AttributeError:
             pass
@@ -53,7 +60,7 @@ class InputHandler:
             if win32gui.GetForegroundWindow() == self.game_hwnd:
                 return
             print("尝试将游戏窗口置于前台...")
-            WindowManager.activate_window(self.game_hwnd)
+            WinControl.activate_window(self.game_hwnd)
             time.sleep(1)
 
 
@@ -108,11 +115,14 @@ class InputHandler:
             self._send_background_key_up(key)
 
     def press(self, key, tm=0.2, keyup=True):
-        """按下并保持tm秒后释放"""
-        self.press_down(key)
+        """使用 win32api 实现后台按键"""
+        vk_code = self._get_vk_code(key)
+        # 发送按下事件
+        win32api.PostMessage(self.game_hwnd, win32con.WM_KEYDOWN, vk_code, 0)
         time.sleep(tm)
         if keyup:
-            self.press_up(key)
+            # 发送释放事件
+            win32api.PostMessage(self.game_hwnd, win32con.WM_KEYUP, vk_code, 0)
 
     def __del__(self):
         """确保释放资源"""
@@ -120,11 +130,21 @@ class InputHandler:
             self.listener.stop()
 
 
-#初始化输入处理器（默认前台模式）
-input_handler = InputHandler(DEFAULT_CONFIG["window"], foreground=True)
 
-#input_handler.press_down('w')
-#input_handler.press_down(Key.space)
-#time.sleep(5)
-#input_handler.press_up('w')
-#input_handler.press_up(Key.space)
+_instance = None
+
+def get_input_handler(config=None, foreground=True):
+    global _instance
+    if _instance is None:
+        if config is None:
+            from main import DEFAULT_CONFIG  # 确保从配置模块导入
+            config = DEFAULT_CONFIG["window"]
+        _instance = InputHandler(config, foreground=foreground)
+    return _instance
+
+
+# input_handler = get_input_handler()
+# time.sleep(3)
+# input_handler.press_down('w')
+# time.sleep(25)
+# input_handler.press_up('w')

@@ -1,15 +1,12 @@
-import cv2
-import numpy as np
-import logging
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+
+from minimap_match import *
 
 class FeatureMatcher:
     """特征匹配类，负责特征匹配和结果可视化"""
 
     def __init__(self, template_path: str, config: dict):
         self.config = config
+        self.region_name = os.path.basename(template_path).replace("_features.npz", "")
         self.kp_template, self.des_template = self._load_template_features(template_path)
         self.last_match_center = None
         self.sift = cv2.SIFT_create(nOctaveLayers=5, contrastThreshold=0.01, edgeThreshold=15)
@@ -17,8 +14,8 @@ class FeatureMatcher:
             dict(algorithm=1, table_number=6, key_size=12),
             dict(checks=config["flann_checks"])
         )
-
-    def _load_template_features(self, filename: str) -> tuple:
+    @staticmethod
+    def _load_template_features(filename: str) -> tuple:
         """加载模板特征"""
         try:
             data = np.load(filename)
@@ -42,6 +39,7 @@ class FeatureMatcher:
         except FileNotFoundError:
             logger.error("特征文件未找到，请先运行特征提取脚本")
             raise
+
     def process_frame(self, query_image: np.ndarray):
         """处理单个帧并进行特征匹配"""
         query_gray = cv2.cvtColor(query_image, cv2.COLOR_BGRA2GRAY)
@@ -53,7 +51,20 @@ class FeatureMatcher:
         # 特征检测和匹配
         kp_query, des_query = self.sift.detectAndCompute(query_gray, None)
         matches = self.flann.knnMatch(des_query, des_template, k=2)
-        good_matches = [m for m, n in matches if m.distance < self.config["match_ratio"] * n.distance]
+
+        # 修改点：加入缩放比例过滤条件
+        good_matches = []
+        for m, n in matches:
+            # 原始的距离比例条件
+            if m.distance < self.config["match_ratio"] * n.distance:
+                # 新增缩放比例条件
+                query_scale = kp_query[m.queryIdx].size  # 查询关键点的尺度
+                template_scale = kp_template[m.trainIdx].size  # 模板关键点的尺度
+                scale_ratio = query_scale / template_scale
+
+                # 通过阈值过滤缩放比例异常的匹配
+                if (0.6) <= scale_ratio<= (1.3):
+                    good_matches.append(m)
 
         if len(good_matches) >= 3:
             return self._handle_successful_match(kp_query, kp_template, good_matches, query_color)
@@ -70,7 +81,7 @@ class FeatureMatcher:
         cx, cy = self.last_match_center
         filtered = [
             (kp, des) for kp, des in zip(self.kp_template, self.des_template)
-            if (kp.pt[0] - cx) ** 2 + (kp.pt[1] - cy) ** 2 <= 1000 ** 2
+            if (kp.pt[0] - cx) ** 2 + (kp.pt[1] - cy) ** 2 <= 150 ** 2
         ]
 
         if filtered:
@@ -89,6 +100,13 @@ class FeatureMatcher:
         M, _ = cv2.estimateAffinePartial2D(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=3.0)
         if M is None:
             return None
+        if matches:  # 确保有匹配
+            first_match = matches[0]
+            query_scale = kp_query[first_match.queryIdx].size
+            template_scale = kp_template[first_match.trainIdx].size
+            scale_ratio = query_scale / template_scale
+        else:
+            scale_ratio = 1.0  # 无匹配时默认比例
 
         theta = np.arctan2(M[1, 0], M[0, 0])
         if abs(np.rad2deg(theta)) > self.config["max_angle"]:
@@ -109,13 +127,12 @@ class FeatureMatcher:
     def _calculate_center(self, M, shape):
         """计算匹配中心点"""
         h, w = shape[:2]
-        scaled_w = int(w * self.config["fixed_scale"])
-        scaled_h = int(h * self.config["fixed_scale"])
-        return (
-            int(M[0, 2] + scaled_w / 2),
-            int(M[1, 2] + scaled_h / 2)
-        )
-
+        cx = w / 2
+        cy = h / 2
+        # 应用仿射变换矩阵到中心点
+        center_x = M[0, 0] * cx + M[0, 1] * cy + M[0, 2]
+        center_y = M[1, 0] * cx + M[1, 1] * cy + M[1, 2]
+        return (int(center_x), int(center_y))
     def _update_match_center(self, matches_count, center):
         """更新匹配中心位置"""
         if matches_count >= self.config["min_matches"]:

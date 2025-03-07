@@ -1,4 +1,30 @@
-from controller import *
+import ctypes
+import time
+from ctypes import wintypes
+import win32api
+import win32gui
+from main import DEFAULT_CONFIG
+from Ui_Manage.WindowManager import WinControl
+if ctypes.sizeof(ctypes.c_void_p) == 4:
+    ULONG_PTR = ctypes.c_ulong  # 32-bit
+else:
+    ULONG_PTR = ctypes.c_ulonglong  # 64-bit
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ('dx', wintypes.LONG),
+        ('dy', wintypes.LONG),
+        ('mouseData', wintypes.DWORD),
+        ('dwFlags', wintypes.DWORD),
+        ('time', wintypes.DWORD),
+        ('dwExtraInfo', ULONG_PTR),
+    ]
+
+class INPUT(ctypes.Structure):
+    _fields_ = [
+        ('type', wintypes.DWORD),
+        ('mi', MOUSEINPUT),
+    ]
+
 
 class MouseController:
     """鼠标控制类"""
@@ -11,7 +37,7 @@ class MouseController:
     MOUSEEVENTF_RIGHTUP = 0x0010
     MOUSEEVENTF_WHEEL = 0x0800
     WHEEL_DELTA = 120
-    def __init__(self, window_manager: WindowManager, config: dict = DEFAULT_CONFIG):
+    def __init__(self, window_manager: WinControl, config: dict = DEFAULT_CONFIG):
         """
         初始化鼠标控制器
         :param window_manager: 窗口管理器实例
@@ -165,15 +191,17 @@ class MouseController:
         self.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
 
 # 初始化窗口管理器
-window_manager = WindowManager()
+window_manager = WinControl()
 
 # 创建鼠标控制器
 mouse = MouseController(window_manager)
 
-#mouse.wheel(1)
-#mouse.click_right()
+#time.sleep(3)
+#mouse.press_right（）#按下右键
+#mouse.release_right()#释放右键
+#mouse.click_right(1)，#按住一秒后放开
 #mouse.click_left()
-
+#mouse.wheel(1)
 # 绝对移动
 #mouse.move_absolute(100, 100)  # 移动到窗口客户区(100,100)位置
 

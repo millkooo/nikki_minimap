@@ -1,3 +1,5 @@
+import threading
+
 import cv2
 import time
 from paddleocr import PaddleOCR
@@ -5,11 +7,11 @@ from paddleocr import PaddleOCR
 
 class RealTimePaddleOCR:
     def __init__(self):
-        """
-        初始化OCR识别器
-        """
         self.ocr = PaddleOCR(use_angle_cls=False)
-        self.region = None  # 存储识别区域 (x1, y1, x2, y2)
+        self.region = None
+        self._stop_event = threading.Event()
+        self._recognition_thread = None
+        self._callback = None
 
     def set_region(self, region):
         """
@@ -51,7 +53,6 @@ class RealTimePaddleOCR:
 
     def recognize(self, img):
         """
-        单次识别模式
         :return: list of (coordinates, text)
                  coordinates格式：[[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
         """
@@ -59,49 +60,82 @@ class RealTimePaddleOCR:
         result = self.ocr.ocr(processed_img, cls=False)
         return self._convert_coordinates(result[0], offset) if result else []
 
-    def continuous_recognize(self, frame_generator, target_text=None, timeout=30):
+    def start_continuous_recognition(self, image_processor, target_text,
+                                     callback, timeout=30, interval=0.5,
+                                     case_sensitive=False, contains=True):
         """
-        连续识别模式 (约30fps)
-        :param frame_generator: 帧生成器（需支持迭代）
-        :param target_text: 目标识别文本（None时为持续识别）
-        :param timeout: 超时时间（秒）
-        :return: 生成器持续输出识别结果，找到目标时终止
+        非阻塞启动连续识别
+        :param callback: 回调函数格式：def callback(status, result)
         """
+        # 如果已有线程在运行则先停止
+        if self._recognition_thread and self._recognition_thread.is_alive():
+            self.stop_continuous_recognition()
+
+        self._callback = callback
+        self._stop_event.clear()
+
+        args = (image_processor, target_text, timeout, interval, case_sensitive, contains)
+        self._recognition_thread = threading.Thread(
+            target=self._continuous_recognition_worker,
+            args=args,
+            daemon=True
+        )
+        self._recognition_thread.start()
+
+    def stop_continuous_recognition(self):
+        """主动停止识别"""
+        self._stop_event.set()
+        if self._recognition_thread and self._recognition_thread.is_alive():
+            self._recognition_thread.join(timeout=2)
+
+    def _continuous_recognition_worker(self, image_processor, target_text,
+                                       timeout, interval, case_sensitive, contains):
+        """工作线程执行体"""
         start_time = time.time()
-        frame_count = 0
+        target = target_text if case_sensitive else target_text.lower()
 
-        for frame in frame_generator:
-            # 计算帧率控制
-            frame_count += 1
-            elapsed = time.time() - start_time
-            expected_time = frame_count / 30
+        try:
+            while not self._stop_event.is_set():
+                # 捕获并处理图像帧
+                frame = image_processor.capture_region()
+                ocr_results = self.recognize(frame)
 
-            # 处理帧
-            result = self.recognize(frame)
+                # 遍历识别结果
+                for (box, text) in ocr_results:
+                    current_text = text if case_sensitive else text.lower()
 
-            # 检查超时
-            if elapsed > timeout:
-                print(f"Timeout reached: {timeout}s")
-                break
+                    if (contains and target in current_text) or \
+                            (not contains and target == current_text):
+                        self._trigger_callback('found', {
+                            'text': text,
+                            'coordinates': box,
+                            'elapsed': time.time() - start_time
+                        })
+                        return
 
-            # 检查目标文本
-            if target_text is not None:
-                if any(target_text in res[1] for res in result):
-                    print(f"Target text '{target_text}' found")
-                    yield result
-                    break
+                # 超时判断
+                if time.time() - start_time > timeout:
+                    self._trigger_callback('timeout', {
+                        'elapsed': time.time() - start_time,
+                        'message': f'未在{timeout}秒内检测到目标文本'
+                    })
+                    return
 
-            # 维持30fps
-            if elapsed < expected_time:
-                time.sleep(expected_time - elapsed)
+                # 间隔等待（可中断）
+                self._stop_event.wait(interval)
+        except Exception as e:
+            self._trigger_callback('error', {
+                'exception': e,
+                'message': '识别过程中发生异常'
+            })
 
-            yield result
-
-
-# #######################
-# 使用示例
-# #######################
-
+    def _trigger_callback(self, status, result):
+        """安全触发回调"""
+        if self._callback:
+            try:
+                self._callback(status, result)
+            except Exception as e:
+                print(f"回调函数执行出错: {str(e)}")
 
 
 
@@ -117,13 +151,13 @@ if __name__ == "__main__":
     for box, text in single_result:
         print(f"Text: {text}\nCoordinates: {box}\n")
 
-    # 示例2：摄像头连续识别
+    # 示例2：连续识别
     ocr_processor.set_region(None)  # 识别全屏
     print("Starting continuous recognition...")
 
     for results in ocr_processor.continuous_recognize(
             frame_generator=camera_generator(),
-            target_text="EXIT",  # 寻找包含"EXIT"的文字
+            target_text="歌声",  # 寻找包含"EXIT"的文字
             timeout=60
     ):
         # 实时显示结果

@@ -1,34 +1,54 @@
-from capture import *
+import cv2
+import numpy as np
+
 
 def save_keypoints(kp, des, filename):
     # 将关键点转换为可序列化格式
     kp_data = []
     for p in kp:
         kp_data.append((
-                p.pt[0], p.pt[1],
-                p.size, p.angle,
-                p.response, p.octave,
-                p.class_id
-            ))
+            p.pt[0], p.pt[1],
+            p.size, p.angle,
+            p.response, p.octave,
+            p.class_id
+        ))
     np.savez(filename, kp=np.array(kp_data), des=des)
 
-# 加载大图像
-train_img = cv2.imread('../resources/nuanuan_map.png', cv2.IMREAD_GRAYSCALE)
-if train_img is None:
-    raise FileNotFoundError("大图像未找到，请检查路径是否正确！")
 
-# 提取特征
-sift = cv2.SIFT_create(nOctaveLayers = 5, contrastThreshold=0.01, edgeThreshold=15)
-kp2, des2 = sift.detectAndCompute(train_img, None)
+# 需要处理的文件列表
+file_names = [
+    'huayanqundao',
+    'huayuanzhen',
+    'qiyuansenlin',
+    'weifenglvye',
+    'xiaoshishu',
+    'panduan'
+]
 
-# 保存特征数据
-save_keypoints(kp2, des2, '../resources/preprocessed_features.npz')
-print("预处理完成！特征数据已保存为preprocessed_features.npz")
+sift = cv2.SIFT_create(nOctaveLayers=5, contrastThreshold=0.01, sigma=1)
 
-# 渲染特征点
-output_img = cv2.drawKeypoints(train_img, kp2, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+for name in file_names:
+    # 加载图像
+    img_path = f'../resources/img/{name}.png'
+    train_img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 
-# 保存带有特征点的图像
-cv2.imwrite('../resources/keypoints_image.png', output_img)
-print("特征点渲染完成，并保存为keypoints_image.png")
+    if train_img is None:
+        print(f"警告：文件 {name}.png 未找到，已跳过")
+        continue
+
+    # 提取特征
+    kp, des = sift.detectAndCompute(train_img, None)
+
+    # 保存特征数据
+    save_keypoints(kp, des, f'../resources/features/{name}_features.npz')
+
+    # 生成并保存特征点可视化图像
+    output_img = cv2.drawKeypoints(train_img, kp, None,
+                                   flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    cv2.imwrite(f'../resources/keypoints/{name}_keypoints.png', output_img)
+
+    print(f"{name} 处理完成，特征保存至 {name}_features.npz，渲染图保存至 {name}_keypoints.png")
+
+print("所有文件处理完成！")
+
 
