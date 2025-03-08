@@ -1,6 +1,4 @@
-import json
 import logging
-import os
 import time
 import cv2
 import numpy as np
@@ -8,6 +6,7 @@ import win32con
 import win32gui
 from Ui_Manage.WindowManager import WinControl
 from capture.img_processor import ImageProcessor
+from match.template_matcher import TemplateMatcher
 from minimap_match.FeatureMatch import FeatureMatcher
 
 # 配置日志
@@ -58,6 +57,25 @@ DEFAULT_CONFIG = {
         "fixed_scale": 1.17,#默认的缩放比例
         "min_scale_ratio":1,
         "max_scale_ratio":1.2
+    },
+    "templates": {
+        "configs": [
+            {
+                "name": "arrow",
+                "path": "resources/img/arrow.png",
+                "threshold": 0.97
+            },
+            {
+                "name": "no_minimap",
+                "path": "resources/img/no_minimap.png",
+                "threshold": 0.97
+            },
+            {
+                "name": "loading",
+                "path": "resources/img/loading.png",
+                "threshold": 0.97
+            }
+        ]
     }
 }
 
@@ -260,8 +278,65 @@ class NavigationState:
         self.prev_hash = None
         self.prev_result = None
         self.boundary_status = {}  # 修正为字典类型
-        self.in_panduan = False
-        self.last_panduan_check = 0
+        self.in_panduan = False  # 保留兼容性
+        self.last_panduan_check = 0  # 保留兼容性
+
+        # 模板匹配状态管理
+        self.template_state = {
+            "active": False,       # 是否处于模板匹配状态
+            "current_template": None,  # 当前匹配到的模板名称
+            "last_check_time": 0,     # 上次检查时间
+            "check_interval": 0.5,    # 检查间隔（秒）
+            "history": {}         # 记录各模板状态历史
+        }
+    
+    def enter_template_state(self, template_name):
+        """进入模板匹配状态"""
+        self.template_state["active"] = True
+        self.template_state["current_template"] = template_name
+        self.template_state["last_check_time"] = time.time()
+        
+        # 记录状态历史
+        if template_name not in self.template_state["history"]:
+            self.template_state["history"][template_name] = {
+                "count": 0,
+                "last_seen": time.time()
+            }
+        
+        self.template_state["history"][template_name]["count"] += 1
+        self.template_state["history"][template_name]["last_seen"] = time.time()
+        
+        logger.info(f"进入模板状态: {template_name}")
+    
+    def exit_template_state(self):
+        """退出模板匹配状态"""
+        if self.template_state["active"]:
+            template_name = self.template_state["current_template"]
+            logger.info(f"退出模板状态: {template_name}")
+            
+            # 更新状态历史
+            if template_name in self.template_state["history"]:
+                self.template_state["history"][template_name]["duration"] = \
+                    time.time() - self.template_state["history"][template_name]["last_seen"]
+            
+            self.template_state["active"] = False
+            self.template_state["current_template"] = None
+    
+    def should_check_template(self):
+        """是否应该检查模板状态"""
+        current_time = time.time()
+        if current_time - self.template_state["last_check_time"] >= self.template_state["check_interval"]:
+            self.template_state["last_check_time"] = current_time
+            return True
+        return False
+        
+    def get_template_status(self, template_name=None):
+        """获取模板状态信息"""
+        if template_name:
+            if template_name in self.template_state["history"]:
+                return self.template_state["history"][template_name]
+            return None
+        return self.template_state["history"]
 
 
 def main():
@@ -277,6 +352,10 @@ def main():
     # 加载模板图
     huayan_img = cv2.imread('resources/img/huayanqundao.png', cv2.IMREAD_GRAYSCALE)
     xinyuanyuanye_img = cv2.imread('resources/img/nuanuan_map.png', cv2.IMREAD_GRAYSCALE)
+
+    # 初始化模板匹配器
+    template_matcher = TemplateMatcher()
+    template_matcher.load_templates(DEFAULT_CONFIG["templates"]["configs"])
 
     features_matcher = {}
     for region, path in DEFAULT_CONFIG["matching"]["region_features"].items():
@@ -326,8 +405,8 @@ def main():
 
     def update_matchers(required_regions):
         """智能更新匹配器列表（带自动清理）"""
-        # 必须保留的匹配器：当前区域 + 活跃边界区域 + panduan
-        must_keep = {state.current_region, "panduan"}
+        # 必须保留的匹配器：当前区域 + 活跃边界区域
+        must_keep = {state.current_region}
         must_keep.update(required_regions)
 
         # 过滤无效区域
@@ -351,39 +430,36 @@ def main():
     try:
         while True:
 
-            if state.in_panduan:
-                current_time = time.time()
+            # 检查是否处于模板匹配状态
+            if state.template_state["active"]:
+                # 定期检查模板状态是否仍然存在
+                if state.should_check_template():
+                    frame = image_processor.capture_region({ "x_offset": 0,"y_offset": 0,"width": 281,"height": 242})
 
-                if state.last_position[0] < 600:
-                    interval = 1
-                else:
-                    interval = 3
-                if current_time - state.last_panduan_check >= interval:
-                    frame = image_processor.capture_region({ "x_offset": 77,"y_offset": 38,"width": 204,"height": 204})
-                    circular_frame = ImageProcessor.circle_crop(frame, DEFAULT_CONFIG["capture"]["diameter"])
-
-                    current_hash = ImageProcessor.compute_image_hash(circular_frame)
-                    if current_hash == state.prev_hash and state.prev_result:
-                        print(f"[Panduan] 复用结果 X: {state.prev_result['center'][0]}")
-                        state.last_panduan_check = int(current_time)  # 将float类型转换为int类型
-                        continue
-
-                    state.prev_hash = current_hash
-                    result = features_matcher["panduan"].process_frame(circular_frame)
-
-                    if result and result["matches"] >= DEFAULT_CONFIG["matching"]["min_matches"]:
-                        state.last_position = result["center"]
-                        state.prev_result = result
-                        print(f"判断状态，当前x值: {state.last_position[0]}")
-                        state.last_panduan_check = int(current_time)  # 将float类型转换为int类型
+                    template_result = template_matcher.match_template(frame, state.template_state["current_template"])
+                    
+                    if not template_result:
+                        # 模板不再匹配，退出模板状态
+                        state.exit_template_state()
+                        logger.info(f"模板 {state.template_state['current_template']} 不再匹配，恢复正常检测")
                     else:
-                        state.in_panduan = False
-                        state.current_region = None
-                        print("退出panduan状态")
+                        # 模板仍然匹配，继续保持当前状态
+                        logger.debug(f"模板 {template_result['name']} 仍然匹配，得分: {template_result['score']:.2f}")
                 continue
 
-            frame = image_processor.capture_region({ "x_offset": 77,"y_offset": 38,"width": 204,"height": 204})
-            circular_frame = ImageProcessor.circle_crop(frame, DEFAULT_CONFIG["capture"]["diameter"])
+            frame = image_processor.capture_region({ "x_offset": 0,"y_offset": 0,"width": 281,"height": 242})
+            cv2.imshow("active", frame)
+            # 先进行模板匹配检测
+            if not state.template_state["active"]:
+                template_result = template_matcher.match_template(frame)
+                print(template_result)
+                if template_result:
+                    # 匹配到模板，进入模板状态
+                    state.enter_template_state(template_result["name"])
+                    logger.info(f"检测到模板 {template_result['name']}，得分: {template_result['score']:.2f}，暂停SIFT检测")
+                    continue
+            frame1 = image_processor._crop_image(frame,{"x": 77, "y": 38, "w": 204, "h": 204})
+            circular_frame = ImageProcessor.circle_crop(frame1, DEFAULT_CONFIG["capture"]["diameter"])
             crop_imgg = ImageProcessor.circle_crop(circular_frame, 32)
 
             # 全局哈希检查
@@ -396,16 +472,6 @@ def main():
                 state.prev_hash = current_hash
                 best_match = None
 
-                # Panduan优先检测
-                panduan_result = features_matcher["panduan"].process_frame(circular_frame)
-                if panduan_result and panduan_result["matches"] >= DEFAULT_CONFIG["matching"]["min_matches"]:
-                    state.current_region = "panduan"
-                    state.in_panduan = True
-                    state.last_position = panduan_result["center"]
-                    state.prev_result = panduan_result
-                    print(f"进入Panduan状态，初始X: {state.last_position[0]}")
-                    continue
-
                 # 动态加载匹配器
                 if state.current_region:
                     # 获取所有需要预加载的边界区域
@@ -413,8 +479,11 @@ def main():
                     # 智能更新匹配器（自动清理+加载）
                     update_matchers(boundary_regions)
                 else:
-                    # 初始状态加载所有匹配器
-                    update_matchers(DEFAULT_CONFIG["matching"]["region_features"].keys())
+                    # 初始状态加载所有匹配器（除了panduan）
+                    regions = list(DEFAULT_CONFIG["matching"]["region_features"].keys())
+                    if "panduan" in regions:
+                        regions.remove("panduan")
+                    update_matchers(regions)
 
                 # 特征匹配
                 for matcher in state.active_matchers:
