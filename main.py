@@ -8,6 +8,7 @@ from Ui_Manage.WindowManager import WinControl
 from capture.img_processor import ImageProcessor
 from match.template_matcher import TemplateMatcher
 from minimap_match.FeatureMatch import FeatureMatcher
+from minimap_match.AngleDetector import AdaptiveAngleDetector
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,7 +48,6 @@ DEFAULT_CONFIG = {
             "qiyuansenlin": "resources/features/qiyuansenlin_features.npz",
             "weifenglvye": "resources/features/weifenglvye_features.npz",
             "xiaoshishu": "resources/features/xiaoshishu_features.npz",
-            "panduan": "resources/features/panduan_features.npz",
             "huayanqundao": "resources/features/huayanqundao_features.npz"
         },
         "min_matches": 10,#更新匹配中心所需匹配的特征点数量
@@ -73,7 +73,7 @@ DEFAULT_CONFIG = {
             {
                 "name": "loading",
                 "path": "resources/img/loading.png",
-                "threshold": 0.97
+                "threshold": 0.98
             }
         ]
     }
@@ -164,110 +164,6 @@ class ResultVisualizer:
             win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                                   win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
 
-class AngleDetector:
-    def __init__(self,
-                 threshold_angle=48,
-                 angle_tolerance=7,
-                 canny_threshold=(50, 150),
-                 hough_params=(20, 16, 10)):
-        # 算法参数配置
-        self.threshold_angle = threshold_angle
-        self.angle_tolerance = angle_tolerance
-        self.canny_threshold = canny_threshold
-        self.hough_threshold, self.min_length, self.max_gap = hough_params
-
-    def calculate_angle(self, circular_frame):
-        # 获取图像中心
-        height, width = circular_frame.shape[:2]
-        center = (width // 2, height // 2)
-
-        # 预处理
-        gray = cv2.cvtColor(circular_frame, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, *self.canny_threshold)
-
-        # 霍夫变换检测直线
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180,
-                                threshold=self.hough_threshold,
-                                minLineLength=self.min_length,
-                                maxLineGap=self.max_gap)
-
-        # 异常处理
-        if lines is None:
-            print("未检测到直线")
-            return 0
-
-        lines = [line[0] for line in lines]
-        if len(lines) < 2:
-            print("检测到的直线不足两条")
-            return 0
-
-        # 遍历所有直线组合寻找最佳角度
-        best = self._find_best_angle_pair(lines, center)
-
-        if best:
-            angle = self._calculate_final_angle(best, center)
-            return int(angle)
-
-        print("未找到符合条件的箭头")
-        return 0
-
-    def _find_best_angle_pair(self, lines, center):
-        best_pair = None
-        best_diff = float('inf')
-
-        for i in range(len(lines)):
-            for j in range(i + 1, len(lines)):
-                line1, line2 = lines[i], lines[j]
-                vertex = self._calculate_intersection(line1, line2)
-
-                if vertex is None:
-                    continue  # 忽略平行线
-
-                angle = self._calculate_angle_between(line1, line2)
-                angle_diff = abs(angle - self.threshold_angle)
-
-                if angle_diff <= self.angle_tolerance and angle_diff < best_diff:
-                    best_diff = angle_diff
-                    best_pair = (line1, line2, *vertex)
-
-        return best_pair
-
-    def _calculate_intersection(self, line1, line2):
-        # 解包线段坐标
-        x1, y1, x2, y2 = line1
-        x3, y3, x4, y4 = line2
-
-        dx1, dy1 = x2 - x1, y2 - y1
-        dx2, dy2 = x4 - x3, y4 - y3
-        # 计算交点
-        denominator = dx2 * dy1 - dx1 * dy2
-        if denominator == 0:
-            return 0 # 平行线跳过
-        # 计算参数t和s
-        t_numerator = dx2 * (y3 - y1) + dy2 * (x1 - x3)
-        s_numerator = dx1 * (y3 - y1) + dy1 * (x1 - x3)
-        t = t_numerator / denominator
-        s = s_numerator / denominator
-        # 计算交点坐标
-        ix = x1 + t * dx1
-        iy = y1 + t * dy1
-        return ix, iy
-
-    def _calculate_angle_between(self, line1, line2):
-        # 计算两向量夹角
-        vec1 = np.array([line1[2] - line1[0], line1[3] - line1[1]])
-        vec2 = np.array([line2[2] - line2[0], line2[3] - line2[1]])
-
-        cos_theta = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        angle = np.degrees(np.arccos(np.clip(cos_theta, -1, 1)))
-        return min(angle, 180 - angle)  # 始终返回锐角
-
-    def _calculate_final_angle(self, best_pair, center):
-        _, _, ix, iy = best_pair
-        dx = ix - center[0]
-        dy = center[1] - iy  # 转换为数学坐标系
-        return np.degrees(np.arctan2(dy, dx)) % 360
-
 
 class NavigationState:
     def __init__(self):
@@ -285,6 +181,7 @@ class NavigationState:
         self.template_state = {
             "active": False,       # 是否处于模板匹配状态
             "current_template": None,  # 当前匹配到的模板名称
+            "previous_template": None, # 上一个模板名称
             "last_check_time": 0,     # 上次检查时间
             "check_interval": 0.5,    # 检查间隔（秒）
             "history": {}         # 记录各模板状态历史
@@ -318,6 +215,9 @@ class NavigationState:
             if template_name in self.template_state["history"]:
                 self.template_state["history"][template_name]["duration"] = \
                     time.time() - self.template_state["history"][template_name]["last_seen"]
+            
+            # 保存上一个模板状态，用于后续处理
+            self.template_state["previous_template"] = template_name
             
             self.template_state["active"] = False
             self.template_state["current_template"] = None
@@ -362,7 +262,15 @@ def main():
         features_matcher[region] = FeatureMatcher(path, DEFAULT_CONFIG["matching"])
 
     state = NavigationState()
-    AngleD = AngleDetector()
+    AngleD = AdaptiveAngleDetector(
+        threshold_angle=45,  # 目标夹角为45度
+        angle_tolerance=5,   # 角度容差为±5度
+        initial_threshold=200,  # 初始阈值
+        min_threshold=180,    # 最小阈值
+        threshold_step=5,    # 阈值递减步长
+        hough_params=(20, 16, 10),  # 霍夫变换参数
+        save_debug_images=False  # 保存调试图像
+    )
 
     def check_boundaries(x, y):
         """边界检测并返回需要预加载的区域（带状态跟踪和自动卸载）"""
@@ -391,7 +299,7 @@ def main():
         to_remove = []
         for bid in state.boundary_status:
             if bid not in active_boundaries:
-                if state.boundary_status[bid] >= 20:  # 连续20帧不在边界内才卸载
+                if state.boundary_status[bid] >= 20:  # 连续20帧不在边界内卸载
                     to_remove.append(bid)
                 else:
                     state.boundary_status[bid] += 1
@@ -448,9 +356,17 @@ def main():
                 continue
 
             frame = image_processor.capture_region({ "x_offset": 0,"y_offset": 0,"width": 281,"height": 242})
-            cv2.imshow("active", frame)
             # 先进行模板匹配检测
             if not state.template_state["active"]:
+                # 检查是否刚从loading状态退出
+                if state.template_state["previous_template"] == "loading":
+                    logger.info("检测到从loading状态退出，加载全部npz文件进行匹配")
+                    # 加载所有区域的匹配器
+                    regions = list(DEFAULT_CONFIG["matching"]["region_features"].keys())
+                    update_matchers(regions)
+                    # 重置previous_template，避免重复处理
+                    state.template_state["previous_template"] = None
+                
                 template_result = template_matcher.match_template(frame)
                 print(template_result)
                 if template_result:
@@ -479,10 +395,8 @@ def main():
                     # 智能更新匹配器（自动清理+加载）
                     update_matchers(boundary_regions)
                 else:
-                    # 初始状态加载所有匹配器（除了panduan）
+                    # 初始状态加载所有匹配器
                     regions = list(DEFAULT_CONFIG["matching"]["region_features"].keys())
-                    if "panduan" in regions:
-                        regions.remove("panduan")
                     update_matchers(regions)
 
                 # 特征匹配
@@ -494,9 +408,12 @@ def main():
                             state.current_region = matcher.region_name
                             state.last_position = result["center"]
                             state.prev_result = best_match  # 保存最新结果
-                    jiaodu = AngleD.calculate_angle(crop_imgg)
-                    if jiaodu:
-                        state.last_angle = jiaodu
+                
+                # 角度检测（移到循环外部，确保每帧都能正确检测角度）
+                jiaodu = AngleD.calculate_angle(crop_imgg)
+                if jiaodu:
+                    state.last_angle = jiaodu
+                    print(f"检测到角度: {jiaodu}°")
             # 4. 显示逻辑
             if best_match:
                 if state.current_region == "huayanqundao":
