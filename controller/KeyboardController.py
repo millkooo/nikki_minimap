@@ -1,9 +1,15 @@
 import ctypes
 import time
+import os
+import sys
 from ctypes import wintypes
 import win32con
 import win32api
 import win32gui
+
+# 添加项目根目录到系统路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from Ui_Manage.WindowManager import WinControl
 from pynput.keyboard import Controller, Listener, Key, KeyCode
 
@@ -73,7 +79,13 @@ class InputHandler:
     def _send_foreground_key_up(self, key):
         """前台模式释放按键"""
         self._ensure_foreground_window()
-        self.keyboard.release(key)
+        try:
+            self.keyboard.release(key)
+        except ctypes.ArgumentError:
+            # 处理ctypes.ArgumentError异常
+            # 使用win32api方式释放按键作为备选方案
+            vk_code = self._get_vk_code(key)
+            win32api.keybd_event(vk_code, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
     def _send_background_key_down(self, key):
@@ -143,8 +155,10 @@ def get_input_handler(config=None, foreground=True):
     return _instance
 
 
-# input_handler = get_input_handler()
-# time.sleep(3)
-# input_handler.press_down('w')
-# time.sleep(25)
-# input_handler.press_up('w')
+# 仅在直接运行此脚本时执行以下代码
+if __name__ == "__main__":
+    input_handler = get_input_handler()
+    time.sleep(3)
+    input_handler.press_down('w')
+    time.sleep(25)
+    input_handler.press_up('w')

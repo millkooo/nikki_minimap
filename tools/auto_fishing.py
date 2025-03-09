@@ -2,6 +2,9 @@ import cv2
 import numpy as np
 import time
 import threading
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Ui_Manage.WindowManager import WinControl
 from capture.img_processor import ImageProcessor

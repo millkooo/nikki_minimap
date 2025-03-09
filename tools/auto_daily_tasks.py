@@ -1,4 +1,10 @@
 import time
+import sys
+import os
+
+# 添加项目根目录到系统路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from controller.MouseController import mouse
 from pynput.keyboard import Key
 from controller.KeyboardController import get_input_handler
@@ -9,11 +15,15 @@ time.sleep(3)
 #input_handler.press_down('w')
 #input_handler.press_up('w')
 #input_handler.press('w',5)
-time.sleep(111)
-#mouse.click_left(1)
+
+mouse.press_left()
+time.sleep(1)
+mouse.move_relative(2236, 0)
+time.sleep(1)
+mouse.release_left()
 #mouse.click_right(5)
 
-# time.sleep(1)
+time.sleep(111)
 # mouse.move_absolute(900,520)#美鸭梨
 # mouse.click_left()
 # time.sleep(1)

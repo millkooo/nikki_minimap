@@ -1,0 +1,50 @@
+{
+  "points": [
+    {
+      "x": 7203,
+      "y": 5961,
+      "region": "weifenglvye",
+      "angle": 25
+    },
+    {
+      "x": 7202,
+      "y": 5962,
+      "region": "weifenglvye",
+      "angle": 25
+    },
+    {
+      "x": 7224,
+      "y": 5993,
+      "region": "weifenglvye",
+      "angle": 304
+    },
+    {
+      "x": 7169,
+      "y": 5952,
+      "region": "weifenglvye",
+      "angle": 110
+    },
+    {
+      "x": 7166,
+      "y": 5939,
+      "region": "weifenglvye",
+      "angle": -0.055508882231469145
+    },
+    {
+      "x": 7166,
+      "y": 5945
+    },
+    {
+      "x": 7166,
+      "y": 5945,
+      "region": "weifenglvye",
+      "angle": 100
+    },
+    {
+      "x": 7167,
+      "y": 5944,
+      "region": "weifenglvye",
+      "angle": 126
+    }
+  ]
+}
