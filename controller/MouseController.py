@@ -3,7 +3,7 @@ import time
 from ctypes import wintypes
 import win32api
 import win32gui
-from main import DEFAULT_CONFIG
+from config_manager import CONFIG
 from Ui_Manage.WindowManager import WinControl
 if ctypes.sizeof(ctypes.c_void_p) == 4:
     ULONG_PTR = ctypes.c_ulong  # 32-bit
@@ -37,7 +37,7 @@ class MouseController:
     MOUSEEVENTF_RIGHTUP = 0x0010
     MOUSEEVENTF_WHEEL = 0x0800
     WHEEL_DELTA = 120
-    def __init__(self, window_manager: WinControl, config: dict = DEFAULT_CONFIG):
+    def __init__(self, window_manager: WinControl, config: dict = CONFIG):
         """
         初始化鼠标控制器
         :param window_manager: 窗口管理器实例

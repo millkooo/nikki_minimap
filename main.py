@@ -11,7 +11,6 @@ from match.template_matcher import TemplateMatcher
 from minimap_match.FeatureMatch import FeatureMatcher
 from minimap_match.AngleDetector import AdaptiveAngleDetector
 
-# 新导入模块
 from Ui_Manage.visualizer import ResultVisualizer
 from navigation import NavigationState
 from minimap_match.boundary_manager import BoundaryManager
@@ -21,26 +20,12 @@ from detection_pipeline import DetectionPipeline
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 读取配置文件
-def load_config(config_path='config.json'):
-    """从JSON文件加载配置"""
-    try:
-        if not os.path.exists(config_path):
-            logger.error(f"配置文件不存在: {config_path}")
-            
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-            
-        logger.info(f"成功加载配置文件: {config_path}")
-        return config
-    except Exception as e:
-        logger.error(f"加载配置文件失败: {e}")
-        sys.exit(1)
+from config_manager import CONFIG
 
 def main():
     """主程序"""
-    # 加载配置
-    CONFIG = load_config()
+    # 使用全局配置
+    # CONFIG已从config_manager导入
     
     # 初始化QApplication
     app = QApplication(sys.argv)
